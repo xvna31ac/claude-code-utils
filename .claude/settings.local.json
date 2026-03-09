@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(for:*)",
+      "Bash(do grep -l \"## Communication Protocol\" \"$file\")",
+      "Bash(done)",
+      "Bash(python3:*)",
+      "Bash(git status:*)",
+      "WebSearch",
+      "Bash(mkdir:*)",
+      "Bash(rm:*)",
+      "Bash(xargs:*)",
+      "WebFetch(domain:qiita.com)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
