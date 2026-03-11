@@ -1,328 +1,340 @@
 ---
 name: workflow-creator
-description: |
-  ユーザーの要求から対話的にワークフローを設計し、必要な Sub Agent・Skills の完全なセットを生成します。
-  新しいAI駆動ワークフローの構築、既存フローの改善提案、Sub Agent / Skills の設計が必要な場合に自動適用されます。
-  「ワークフローを作って」「新しいフローを設計して」「Sub Agentを設計して」などのリクエストでトリガーされます。
+description: ユーザーの要求からワークフロースキルを対話的に生成。Phase-Agent Mapping構造を持つ ONE STEP PER INVOCATION 型ワークフロー SKILL.md と関連エージェント・スキルを一括生成。シンプルワークフローとサブワークフロー（フェーズ内ワークフロー）の両方に対応。
+tools: Read, Glob, Bash, Agent, TaskCreate, TaskUpdate, TaskGet, AskUserQuestion, WebSearch
+argument-hint: [workflow-name]
 ---
 
-## 概要
+# workflow-creator
 
-ユーザーの要求を起点に、対話的なフィードバックループを通じてワークフロー・Sub Agent・Skills の完全なセットを設計・生成する。
-素人ユーザーを前提とし、AI・ユーザー双方の懸念がなくなるまで反復対話する。
+ユーザーのラフな要求からワークフロースキル・関連エージェント・ドメインスキルを一括生成する「スキルを作るスキル」。
 
-**状態ファイル**: `.workflow/state/workflow-creator.md`（Phase 1 で初期化・以降全フェーズで更新）
+## 前提条件
 
----
+- `$ARGUMENTS`: ワークフロー名（省略可。省略時はDISCOVERYで確定）
+- 状態ファイル: `.workflow/state/{name}.md`（セッション間の継続に使用）
+- 既存スキル確認: `.claude/skills/*/SKILL.md`
+- 既存エージェント確認: `.claude/agents/*.md`
 
-## フェーズ一覧
+## ONE STEP PER INVOCATION の原則
 
-| Phase | フェーズ名 | 使用Skill / 参照 | 承認ゲート |
-|-------|-----------|-----------------|-----------|
-| 1 | タスク分離・状態初期化 | — | なし |
-| 2 | 要求解析・ベストプラクティス調査 | — | なし |
-| 3 | ワークフロー提案・確立 | — | **Gate A** |
-| 4 | スコープ確認 | — | **Gate B** |
-| 5 | Phase-SubAgent-Skill マッピング提案 | `skills/workflow-creator/references/workflow-template.md` | なし |
-| 6 | 既存 Sub Agent・Skill 重複確認 | — | なし |
-| 7 | マッピング確立 | — | **Gate C** |
-| 8 | ワークフロースキル生成 | `.claude/skills/skill-review/references/skill-creator-guidelines.md` | なし |
-| 9 | ワークフロースキル AI フィードバック | skill-review（不在時は新規作成） | **Gate D** |
-| 10 | Sub Agent 作成 | `skills/workflow-creator/references/subagent-checklist.md` | なし |
-| 11 | Sub Agent AI フィードバック | agent-review（不在時は新規作成） | なし |
-| 12 | Skills 作成 | `skills/workflow-creator/references/skills-checklist.md` | なし |
-| 13 | Skills AI フィードバック | skill-review（不在時は新規作成） | なし |
-| 14 | 品質検証フィードバックループ | skill-review, agent-review | **Gate E** |
+**呼び出しごとに正確に1フェーズのみ実行。** 状態ファイルで現在フェーズを管理し、再開時は状態ファイルを読み込んで継続する。
 
----
+## 実行フロー
 
-## 承認ゲート定義
+### Phase 1: DISCOVERY
 
-### Gate A — ワークフロー構造の合意
-- 確認内容: 提案したワークフロー構造（フェーズ数・各フェーズの役割・全体フロー）について、AI・ユーザー双方の懸念が解消されているか
-- APPROVE 時: Phase 4 へ進む
-- REJECT 時: ユーザーのフィードバックを取り込み Phase 3 を反復する
+```
+目的: ワークフロー要件をAskUserQuestionで収集
+```
 
-### Gate B — スコープ確定
-- 確認内容: 設計したワークフローのカバー範囲（コミットまで？デプロイまで？モニタリングも？）について AI・ユーザー双方が懸念なく合意できているか
-- APPROVE 時: Phase 5 へ進む
-- REJECT 時: スコープを再調整し Phase 4 を反復する
+**Step 0: 状態確認**
+1. `$ARGUMENTS`が存在する場合、`.workflow/state/{$ARGUMENTS}.md`を確認
+2. 状態ファイルが存在し`phase != DISCOVERY`の場合 → 当該フェーズから再開
+3. 既存スキル（`.claude/skills/`）・エージェント（`.claude/agents/`）を一覧化
 
-### Gate C — マッピング確定
-- 確認内容: 全フェーズへの Sub Agent・Skills 割り当てについて、AI・ユーザー双方の懸念が解消されているか
-- APPROVE 時: Phase 8 へ進む
-- REJECT 時: マッピングを修正し Phase 5 に戻る
+**Step 1: ラウンド1 - ワークフローの本質**
 
-### Gate D — ワークフロースキル品質確認
-- 確認内容: skill-review の結果が Critical ゼロ・Important ゼロであるか
-- APPROVE 時: Phase 10 へ進む
-- REJECT 時: Phase 8 でスキルを修正し Phase 9 を反復する
+AskUserQuestionで収集:
+- 何を達成したいか？最終的な成果物（アーティファクト）は？
+- 自動化・効率化したい具体的な課題は？
+- ワークフロー名の候補（`$ARGUMENTS`がない場合）
 
-### Gate E — 全成果物の最終承認
-- 確認内容: 生成した全ファイル（ワークフロースキル・Sub Agent・Skills）の品質をユーザーが承認するか
-- APPROVE 時: 完了報告を行い状態ファイルを完了ステータスに更新する
-- REJECT 時: 指摘された成果物の生成フェーズに戻り修正する
+**Step 2: ラウンド2 - フェーズと粒度**
 
----
+AskUserQuestionで収集:
+- 自然な作業の流れに分けると何段階か？各段階の名前は？
+- 各段階の中に「さらにステップがある複雑な作業」はあるか？→ 複合フェーズ候補
+- どの段階で人間の確認（承認ゲート）が必要か？
+- ループ処理が必要な段階はあるか？（タスク × N 回など）
 
-## Phase 1: タスク分離・状態初期化
+**Step 3: ラウンド3 - 品質・スコープ確認**
 
-- 実行内容: 状態ファイルを初期化し、ユーザーの要求を受け取る前の準備を行う
-- 専門性:
-  - `.workflow/state/workflow-creator.md` の存在を Glob で確認する
-  - 存在する場合は Read して前回セッションの状態を確認し、継続か新規開始かをユーザーに確認する
-  - 新規開始の場合は状態ファイルを以下の初期状態で Write する:
-    ```
-    # workflow-creator 状態
-    - 開始日時: {現在日時}
-    - 現在フェーズ: Phase 1
-    - ユーザー要求: （未入力）
-    - Gate A: 未実施
-    - Gate B: 未実施
-    - Gate C: 未実施
-    - Gate D: 未実施
-    - Gate E: 未実施
-    - 生成予定ファイル: （未確定）
-    ```
-- 期待成果物: 初期化済みの状態ファイル `.workflow/state/workflow-creator.md`
-- 完了基準: 状態ファイルが存在し Phase 2 に進む準備が整っている
+AskUserQuestionで収集:
+- 各フェーズで必要な専門知識・ドメイン知識は？
+- 開始条件・完了条件（成功基準）は？
+- スコープの端点（最終的にどこまでやるか - コミット？PR？デプロイ？）
+- **[条件付き]** ラウンド1〜2で外部サービス連携（通知・API呼び出し・外部システム操作等）が含まれそうな場合のみ: 利用可能なMCPサーバーはあるか？（例: slack-mcp, github-mcp など）
+
+**Step 4: Discovery State を状態ファイルに保存**
+
+`.workflow/state/{name}.md`に以下を記録:
+```
+# Workflow: {name}
+## Phase: DESIGN
+## Discovery State
+goal: {ゴール}
+phases: [{フェーズ名リスト}]
+complex_phases: [{複合フェーズ候補}]
+approval_gates: [{承認ゲートが必要なフェーズ}]
+loops: [{ループフェーズ}]
+domain_knowledge: {ドメイン知識}
+scope_end: {スコープ端点}
+external_integrations: [{外部サービス名と手段（mcp: サーバー名 / bash: APIコール / skill: スキル名）}]  # 外部連携がない場合は省略
+```
+
+→ **次回呼び出しで Phase 2: DESIGN を実行**
 
 ---
 
-## Phase 2: 要求解析・ベストプラクティス調査
+### Phase 2: DESIGN
 
-- 実行内容: ユーザーの要求を詳細に聞き取り、ベストプラクティスを調査した上でワークフローの方向性を確認する
-- 専門性:
-  - ユーザーに以下を対話的に確認する:
-    - 自動化したいプロセス・タスクの概要
-    - 現在の作業フローの課題・ボトルネック
-    - 期待する成果物・品質基準
-    - 技術スタック・制約条件
-  - **パターン分岐**（ユーザー要求の内容により分岐する）:
-    - **具体的なワークフローを指示している場合**: 対象分野のベストプラクティスを WebSearch/WebFetch で調査し、提示されたワークフローに問題・改善点がないかを提案しつつ確認する
-    - **具体的なワークフローを指示していない場合**: 対象分野のベストプラクティスを WebSearch/WebFetch で調査し、最適なワークフローを提案する
-    - *(WebSearch/WebFetch が失敗・利用不可の場合は Claude の学習済み知識を使用し、その旨をユーザーに通知する)*
-  - `.claude/agents/*.md` を Glob でスキャンして既存 Sub Agent 一覧を取得する（Phase 6 で再利用するためリストを保持する）
-  - `.claude/skills/*/SKILL.md` を Glob でスキャンして既存 Skills 一覧を取得する（同上）
-  - 状態ファイルにユーザー要求と既存リソース情報を記録する
-- 期待成果物: 聞き取り済みのユーザー要求・ベストプラクティス調査結果・既存 Sub Agent / Skills のリスト
-- 完了基準: ワークフロー設計に必要な情報が揃い、ベストプラクティス調査と既存リソースのスキャンが完了している
+```
+目的: workflow-designer に委譲してDesign JSONを生成
+入力: Discovery State（状態ファイルから読み込み）
+出力: Design JSON
+```
 
----
+**Step 1: references/workflow-design-patterns.md を読み込む**
 
-## Phase 3: ワークフロー提案・確立 → Gate A
+**Step 2: workflow-designer エージェントに委譲（Agent tool）**
 
-- 実行内容: Phase 2 の情報を基にワークフロー構造を設計し、ユーザーに提案する
-- 専門性:
-  - フェーズ数は必要最小限（3〜8 フェーズを目安）とする
-  - 各フェーズに明確な入力・出力・完了基準を設ける
-  - 承認ゲートは破壊的変更前・設計確定の場面にのみ配置する（読み取り・分析フェーズは不要）
-  - 提案フォーマット:
-    ```
-    ## 提案ワークフロー: {ワークフロー名}
-    | Phase | フェーズ名 | 概要 | 承認ゲート |
-    |-------|-----------|------|-----------|
-    | 1 | ... | ... | なし/Gate X |
-    ```
-  - 懸念点・代替案があれば合わせて提示する
-  - AI 側の懸念が解消されるまでユーザーと対話を繰り返す
-- 期待成果物: ユーザーへのワークフロー提案（フェーズ一覧テーブル形式）
-- 完了基準: Gate A を通過して AI・ユーザー双方がワークフロー構造に懸念なく合意している
+入力として渡す:
+- Discovery State の全内容
+- 既存エージェント一覧（`.claude/agents/*.md` のfrontmatter name）
+- 既存スキル一覧（`.claude/skills/*/SKILL.md` のfrontmatter name と description）
+- workflow-design-patterns.md の内容
 
----
+**Step 3: [承認ゲート①] Phase-Agent Mapping の確認**
 
-## Phase 4: スコープ確認 → Gate B
+Design JSON の Phase-Agent Mapping テーブルをユーザーに提示:
+```
+| Phase | Type | Target | Approval Gate |
+|-------|------|--------|:---:|
+...
+```
 
-- 実行内容: 設計したワークフロー自体のカバー範囲をユーザーと確定する
-- 専門性:
-  - AI から積極的に以下の軸でユーザーに問いかける（「言われてみれば必要だった」フェーズを引き出す）:
-    - **終了条件**: コミットまで？PR作成まで？デプロイまで？モニタリングも？
-    - **エラーハンドリング・ロールバックフェーズ**: 失敗時の復旧フローは必要か？
-    - **承認・レビューフェーズ**: 人間が介在する承認ステップは必要か？
-    - **通知・レポートフェーズ**: Slack通知・レポート生成は必要か？
-  - ユーザーが「そこまでは不要」と答えるまで各軸を確認し続ける
-  - 確定したスコープを状態ファイルに記録する
-- 期待成果物: ワークフロー全フェーズ・終了条件が確定したスコープ定義
-- 完了基準: Gate B を通過して設計したワークフローの全カバー範囲について AI・ユーザー双方が懸念なく合意している
+AskUserQuestionで確認:
+- このマッピングで問題ないか？
+- 変更したいフェーズ・エージェントはあるか？
+
+修正リクエストがある場合: workflow-designer に差し戻し（最大2回）
+
+**Step 4: 状態ファイルを更新**
+```
+## Phase: GENERATE
+## Design JSON
+{Design JSONの内容}
+```
 
 ---
 
-## Phase 5: Phase-SubAgent-Skill マッピング提案
+### Phase 3: GENERATE
 
-- 実行内容: `skills/workflow-creator/references/workflow-template.md` を Read し、各フェーズへの Sub Agent・Skills の割り当てを設計する
-- 専門性:
-  - テンプレートに従いマッピング表を作成する
-  - **割り当て制約**（必須遵守）:
-    - Phase → Sub Agent: **1対1**（各フェーズに担当 Sub Agent は1つ）
-    - Sub Agent → Skills: **1対N**（各 Sub Agent は複数の Skills を使用可能）
-  - Phase 2 で取得した既存リソースリストを参照し、再利用可能なものを優先する
-  - 新規作成が必要な Sub Agent・Skills を識別し、その役割・tools を設計する
-  - 命名規則を遵守する:
-    - Sub Agent: 役割・人物名（`backend-developer` 形式、ケバブケース）
-    - Skill: 行為・能力名（`skill-creator` 形式、ケバブケース）
-  - マッピング表をユーザーに提示して確認を求める
-- 期待成果物: フェーズ別 Sub Agent・Skills マッピング表（1:1・1:N 制約遵守）
-- 完了基準: 全フェーズに Sub Agent / Skills の割り当てが完了し、1:1・1:N 制約を満たしている
+```
+目的: workflow-generator に委譲して最上位ワークフロー SKILL.md を生成
+入力: Design JSON
+出力: SKILL.md 全文
+```
 
----
+**Step 1: references/generation-guide.md を読み込む**
+**Step 2: references/templates/workflow-skill-template.md を読み込む**
 
-## Phase 6: 既存 Sub Agent・Skill 重複確認
+**Step 3: workflow-generator エージェントに委譲（Agent tool）**
 
-- 実行内容: Phase 2 で取得した既存リソースリストと Phase 5 のマッピングを照合し、重複・類似を排除する
-- 専門性:
-  - 新規作成予定の Sub Agent について、`.claude/agents/` の既存エージェントと役割の重複がないか確認する
-  - 新規作成予定の Skill について、`.claude/skills/` の既存スキルと機能の重複がないか確認する
-  - 重複が見つかった場合は既存リソースへの参照に切り替える（新規作成を回避する）
-  - 類似だが異なる役割の場合は差異を明記し新規作成を正当化する
-- 期待成果物: 重複除去済みの最終マッピング（新規作成リストと既存利用リスト）
-- 完了基準: 全新規作成リソースに重複がなく、既存リソース利用が最大化されている
+入力として渡す:
+- Design JSON（最上位ワークフロー全体）
+- workflow-skill-template.md の内容
+- generation-guide.md の内容
+
+**Step 4: 生成物を状態ファイルに記録**
+```
+## Phase: SUB_WORKFLOWS
+## Generated Main SKILL.md
+{SKILL.md全文}
+```
 
 ---
 
-## Phase 7: マッピング確立 → Gate C
+### Phase 4: SUB_WORKFLOWS
 
-- 実行内容: Phase 5〜6 の結果を整理してユーザーに最終マッピングを提示する
-- 専門性:
-  - 最終マッピング表（フェーズ / Sub Agent / Skills / 既存利用 or 新規作成）をユーザーに提示する
-  - 新規作成ファイル数とパスを明示する
-  - ユーザーの懸念点に回答し必要に応じて調整する
-  - AI 側の懸念が解消されるまでユーザーと対話を繰り返す
-  - 状態ファイルに確定マッピングと生成予定ファイル一覧を記録する
-- 期待成果物: 確定した Phase-SubAgent-Skills マッピング表
-- 完了基準: Gate C を通過して AI・ユーザー双方がマッピングに懸念なく合意し状態ファイルに記録されている
+```
+目的: 複合フェーズのサブワークフロー SKILL.md を生成
+条件: Design JSON に type=workflow のフェーズが存在する場合のみ実行
+     存在しない場合は Phase 5 へスキップ
+```
 
----
+**Step 1: Design JSON から `type: workflow` フェーズを抽出**
 
-## Phase 8: ワークフロースキル生成
+**Step 2: 各サブワークフローに対して workflow-generator に委譲**
 
-- 実行内容: `.claude/skills/skill-review/references/skill-creator-guidelines.md` を Read し、ワークフロースキルの SKILL.md を生成する
-- 専門性:
-  - ガイドラインの「ワークフロースキル固有の要件」を遵守する:
-    - `name` が `workflow-` プレフィックスで始まること
-    - フェーズ一覧テーブルを持つこと
-    - 承認ゲートに「確認内容 / APPROVE時 / REJECT時」を明記すること
-    - 状態ファイルパスが `.workflow/state/<name>.md` 形式であること
-    - スキル呼び出しが `skill-name` 形式（`/skill-name` は誤り）であること
-  - 各フェーズの定義には以下を必ず含める:
-    - 詳細（実行内容・専門性）
-    - 担当 Sub Agent
-    - Sub Agent が使用する Skills
-    - **Sub Agent に指示するプロンプト**（具体的な指示内容を明記）
-  - 生成するワークフロースキルでは各フェーズの Sub Agent が使用する Skills をフロントマターで明示する（OSS代替への差し替えがフロントマター変更のみで完結するよう設計）
-  - 500 行以内に収め、詳細は references/ に分離する
-  - 参照パスはプロジェクトルート相対の完全パスを使用する
-  - 生成前にファイルの存在を Glob で確認し、存在する場合はユーザーに上書き確認をする
-- 期待成果物: 新規ワークフロースキルの SKILL.md
-- 完了基準: SKILL.md が生成され、ガイドラインのワークフロースキル固有要件を満たしている
+各 `type: workflow` フェーズについて:
+- `subWorkflowName` と `subPhases` を入力として workflow-generator に委譲
+- 生成された SKILL.md を状態ファイルに記録
+
+**Step 3: 状態ファイルを更新**
+```
+## Phase: SUBAGENTS
+## SubWorkflows
+{各サブワークフロー名とSKILL.md内容}
+```
 
 ---
 
-## Phase 9: ワークフロースキル AI フィードバック → Gate D
+### Phase 5: SUBAGENTS
 
-- 実行内容: 生成した SKILL.md に対して `skill-review` を実行し、品質を検証する
-- 専門性:
-  - `.claude/skills/skill-review/SKILL.md` の存在を Glob で確認する
-  - 存在しない場合: `.claude/skills/skill-review/references/skill-creator-guidelines.md` を参照して `skill-review` を新規作成してから呼び出す
-  - `skill-review` を Phase 8 で生成した SKILL.md を対象として呼び出す
-  - skill-review のレポートで Critical / Important が 0 件になるまで Phase 8 に戻り修正する
-  - Nice to have は Phase 8 修正の際に可能な範囲で対応する
-- 期待成果物: Critical ゼロ・Important ゼロの品質検証済み SKILL.md
-- 完了基準: Gate D を通過して skill-review が Critical / Important 0 件を報告している
+```
+目的: 各フェーズのエージェントファイルを生成
+条件: agentReuse=false のフェーズのみ生成（agentReuse=true はスキップ）
+```
 
----
+**Step 1: references/templates/subagent-template.md を読み込む**
 
-## Phase 10: Sub Agent 作成
+**Step 2: 新規作成が必要なエージェントを特定**
 
-- 実行内容: `skills/workflow-creator/references/subagent-checklist.md` を Read し、Phase 7 で確定した新規 Sub Agent を作成する
-- 専門性:
-  - 各 Sub Agent の担当分野における最新の専門知識を WebSearch/WebFetch で調査する
-    - *(調査が失敗・利用不可の場合は Claude の学習済み知識を使用し、その旨をユーザーに通知する)*
-  - `skills/workflow-creator/references/subagent-checklist.md` 記載のベストプラクティス以外のプラクティスも精査・整理する
-  - 精査した専門知識を Sub Agent の body に構造的かつ簡潔に反映する（重要な情報が欠如しないこと）
-  - 各 Sub Agent の frontmatter に使用 Skills を明示する（OSS代替への差し替えを想定した設計）:
-    ```yaml
-    skills:
-      - skill-name-1
-      - skill-name-2
-    ```
-  - 各 Sub Agent を `.claude/agents/<name>.md` に Write する
-  - 作成前にファイルの存在を Glob で確認し、存在する場合はユーザーに上書き確認をする
-  - 複数の Sub Agent がある場合は1ファイルずつ順番に作成し、各作成後にチェックリストを適用する
-- 期待成果物: 専門知識を反映した Skills 明示済みの新規 Sub Agent ファイル群
-- 完了基準: 新規作成対象の全 Sub Agent が生成され、チェックリスト基準と専門知識反映基準を満たしている
+Design JSON から `agentReuse: false` のフェーズを抽出。
+既存エージェント（`.claude/agents/*.md`）との重複を再確認。
+
+**Step 3: 各エージェントに対して workflow-subagent-generator に委譲**
+
+入力として渡す:
+- フェーズ定義1件（id, name, agentName, skills, outputKeywords等）
+- subagent-template.md の内容
+- ドメイン情報（domainResearch.findings）
+
+**Step 4: 状態ファイルを更新**
+```
+## Phase: DOMAIN_SKILLS
+## Generated Agents
+{各エージェント名と内容}
+```
 
 ---
 
-## Phase 11: Sub Agent AI フィードバック
+### Phase 6: DOMAIN_SKILLS
 
-- 実行内容: 作成した Sub Agent ファイルに対して `agent-review` を実行し、品質を検証する
-- 専門性:
-  - `.claude/skills/agent-review/SKILL.md` の存在を Glob で確認する
-  - 存在しない場合: `.claude/skills/agent-review/references/agent-guidelines.md` を参照して `agent-review` を新規作成してから呼び出す
-  - `agent-review` を Phase 10 で作成した全 Sub Agent ファイルを対象として呼び出す
-  - Critical / Important が報告された場合は該当ファイルを修正して再検証する
-  - 修正後は `agent-review` を再実行して改善を確認する
-- 期待成果物: Critical ゼロ・Important ゼロの品質検証済み Sub Agent ファイル群
-- 完了基準: 全 Sub Agent ファイルの agent-review が Critical / Important 0 件を報告している
+```
+目的: 新規ドメインスキルを生成
+条件: Design JSON の各フェーズの skills[] に reuse=false のスキルが存在する場合のみ
+     存在しない場合は Phase 7 へスキップ
+```
 
----
+**Step 1: references/templates/domain-skill-template.md を読み込む**
 
-## Phase 12: Skills 作成
+**Step 2: 新規作成が必要なスキルを特定**
 
-- 実行内容: `skills/workflow-creator/references/skills-checklist.md` を Read し、Phase 7 で確定した新規 Skills を作成する
-- 専門性:
-  - 各 Skill の対象分野における最新の専門知識を WebSearch/WebFetch で調査する
-    - *(調査が失敗・利用不可の場合は Claude の学習済み知識を使用し、その旨をユーザーに通知する)*
-  - `skills/workflow-creator/references/skills-checklist.md` 記載のベストプラクティス以外のプラクティスも精査・整理する
-  - 専門分野がさらに細分化できる場合（言語別・フレームワーク別など）は `references/` に分離し、フロントマター変更のみで切り替え可能な呼び出し形式を設計する
-  - 各 Skill を `.claude/skills/<name>/SKILL.md` に Write する
-  - チェックリストの全項目を満たすことを確認する
-  - 作成前にファイルの存在を Glob で確認し、存在する場合はユーザーに上書き確認をする
-  - 参照ファイルが必要な場合は `.claude/skills/<name>/references/` に配置する
-- 期待成果物: 専門知識を反映した新規 Skill ファイル群（サブスキル切り替え設計込み）
-- 完了基準: 新規作成対象の全 Skills が生成され、チェックリスト基準と専門知識反映基準を満たしている
+各フェーズの `skills[]` から `reuse: false` のスキルを抽出。
+既存スキル（`.claude/skills/*/SKILL.md`）との重複を再確認。
+
+**Step 3: 各スキルに対して workflow-domain-skill-generator に委譲**
+
+**Step 4: 状態ファイルを更新**
+```
+## Phase: REVIEW
+## Generated Domain Skills
+{各スキル名と内容}
+```
 
 ---
 
-## Phase 13: Skills AI フィードバック
+### Phase 7: REVIEW
 
-- 実行内容: 作成した Skills ファイルに対して `skill-review` を実行し、品質を検証する
-- 専門性:
-  - `.claude/skills/skill-review/SKILL.md` の存在を Glob で確認する（Phase 9 で作成済みの場合はスキップ）
-  - 存在しない場合: `.claude/skills/skill-review/references/skill-creator-guidelines.md` を参照して `skill-review` を新規作成してから呼び出す
-  - `skill-review` を Phase 12 で作成した全 Skills ファイルを対象として呼び出す
-  - Critical / Important が報告された場合は該当ファイルを修正して再検証する
-  - 修正後は `skill-review` を再実行して改善を確認する
-- 期待成果物: Critical ゼロ・Important ゼロの品質検証済み Skills ファイル群
-- 完了基準: 全 Skills ファイルの skill-review が Critical / Important 0 件を報告している
+```
+目的: 全生成物の整合性・品質レビューと最終書き込み
+```
+
+**Step 1: workflow-artifact-reviewer に委譲（Agent tool）**
+
+入力として渡す:
+- 全生成物（状態ファイルから取得）
+- Design JSON
+
+**Step 2: グレード判定**
+
+| グレード | アクション |
+|---------|-----------|
+| A | 承認ゲート②へ進む |
+| B | 承認ゲート②へ進む（改善点をユーザーに通知） |
+| C | 問題フェーズのエージェントに差し戻し（最大2回） |
+
+Grade Cの場合: reviewerの指摘に基づき該当エージェントで修正 → 再レビュー
+
+**Step 3: [承認ゲート②] 最終確認**
+
+AskUserQuestionで確認:
+- 生成物の一覧（ファイルパス・概要）を提示
+- 既存ファイルと重複する場合は上書き確認
+- 書き込み承認を取得
+
+**Step 4: ファイル書き込み**
+
+承認後、以下のパスにファイルを書き込み:
+
+```
+.claude/
+├── skills/
+│   ├── {workflow-name}/SKILL.md
+│   ├── {workflow-name}/references/phases.md（Design JSON由来）
+│   └── {sub-workflow-name}/SKILL.md（サブワークフローが存在する場合）
+└── agents/
+    └── {agent-name}.md（新規エージェントのみ）
+```
+
+ドメインスキルが生成された場合:
+```
+.claude/skills/{skill-name}/SKILL.md
+```
+
+**Step 5: 完了報告**
+
+- 生成したファイル一覧
+- 再利用した既存リソース一覧
+- 次のアクション提案（`/{workflow-name} run` で実行可能）
 
 ---
 
-## Phase 14: 品質検証フィードバックループ → Gate E
+## 状態管理仕様
 
-- 実行内容: 全成果物を一括で品質検証し、ユーザーへ最終報告を行う
-- 専門性:
-  - 生成したワークフロースキルに `skill-review` を実行する（Phase 9 以降に変更があった場合のみ）
-  - 作成した全 Skills に `skill-review` を実行する（Phase 13 以降に変更があった場合のみ）
-  - 作成した全 Sub Agent に `agent-review` を実行する（Phase 11 以降に変更があった場合のみ）
-  - 最終レポートをユーザーに提示する:
-    ```
-    ## 生成完了レポート
-    - ワークフロースキル: {パス} — {品質評価}
-    - Sub Agent: {パス一覧と品質評価}
-    - Skills: {パス一覧と品質評価}
-    - 残課題: {Nice to have 項目一覧}
-    ```
-  - 状態ファイルを完了ステータスに更新する
-- 期待成果物: 最終レポートと完了ステータスの状態ファイル
-- 完了基準: Gate E を通過してユーザーが全成果物を承認している
+### 状態ファイルフォーマット（`.workflow/state/{name}.md`）
+
+```markdown
+# Workflow: {name}
+## Phase: {DISCOVERY|DESIGN|GENERATE|SUB_WORKFLOWS|SUBAGENTS|DOMAIN_SKILLS|REVIEW|COMPLETE}
+## Created: {date}
+## Last Updated: {date}
+
+## Discovery State
+{ヒアリング結果}
+
+## Design JSON
+```json
+{...}
+```
+
+## Generated Main SKILL.md
+{内容}
+
+## SubWorkflows
+{各サブワークフロー名と内容}
+
+## Generated Agents
+{各エージェント名と内容}
+
+## Generated Domain Skills
+{各スキル名と内容}
+```
 
 ---
 
-## 設計原則
+## エラーハンドリング
 
-- **素人ユーザー前提**: 積極的にアプローチ・確認。懸念がなくなるまで反復対話する
-- **既存リソース優先**: 新規作成前に必ず Phase 2 のスキャン結果を参照し再利用を検討する
-- **Progressive Disclosure**: references/ は各フェーズで明示的に Read する（冒頭一括 Read 禁止）
-- **冪等性確保**: ファイル生成は各ファイルの直前に存在確認を行い上書きをユーザーに確認する
-- **柔軟な組み換え設計**: Sub Agent フロントマターで Skills を明示し、OSS代替への差し替えをフロントマター変更のみで完結させる
+| エラー | アクション |
+|--------|-----------|
+| workflow-designer が無効なJSONを返却 | 入力を簡素化して1回再試行 |
+| 承認ゲートで2回リトライ後も合意なし | 現在の設計を提示し、手動修正を提案 |
+| Grade C が2回連続 | 問題リストを提示し、ユーザーに判断を委ねる |
+| 既存ファイルと重複 | AskUserQuestion で上書き確認 |
+| WebSearch 失敗 | Claude 知識で続行 + `webSearchFailed: true` を記録 |
+
+## スコープ境界
+
+**このスキルが担当**: ヒアリング・状態管理・エージェント委譲・ファイル書き込み。
+**このスキルが担当しない**: フェーズ設計ロジック（workflow-designer）、SKILL.md生成（workflow-generator）、品質評価（workflow-artifact-reviewer）。
+
+## References
+
+- [workflow-design-patterns.md](references/workflow-design-patterns.md) - Phase 2で使用
+- [generation-guide.md](references/generation-guide.md) - Phase 3/4で使用
+- [templates/workflow-skill-template.md](references/templates/workflow-skill-template.md) - Phase 3/4で使用
+- [templates/subagent-template.md](references/templates/subagent-template.md) - Phase 5で使用
+- [templates/domain-skill-template.md](references/templates/domain-skill-template.md) - Phase 6で使用
