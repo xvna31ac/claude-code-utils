@@ -1,0 +1,92 @@
+{
+  "skill_name": "doc-audit",
+  "evals": [
+    {
+      "id": 1,
+      "eval_name": "full-docs-audit",
+      "prompt": "/doc-audit",
+      "expected_output": "docs/ 配下の全ファイルを対象に、🔴🟡🟢の3段階で問題点を分類したレポートを出力する。修正は行わず「どの項目から対応しますか？」と確認して終わる。",
+      "files": [],
+      "assertions": [
+        {
+          "id": "a1-1",
+          "name": "3段階分類が存在する",
+          "description": "レポートに🔴・🟡・🟢の3セクションが全て含まれているか"
+        },
+        {
+          "id": "a1-2",
+          "name": "対象ファイル数が記載されている",
+          "description": "レポートの冒頭に「対象: N ファイル」のような件数の記載があるか"
+        },
+        {
+          "id": "a1-3",
+          "name": "修正を承認前に実施していない",
+          "description": "ファイルの変更・移動・削除を行わず、レポート提示のみで終わっているか"
+        },
+        {
+          "id": "a1-4",
+          "name": "対応確認の問いかけがある",
+          "description": "レポート末尾に「どの項目から対応しますか？」等、次のアクションを確認する文言があるか"
+        },
+        {
+          "id": "a1-5",
+          "name": "指摘にファイル名が含まれている",
+          "description": "各指摘事項にどのファイルの問題かが明記されているか"
+        },
+        {
+          "id": "a1-6",
+          "name": "虚偽の🔴を報告していない",
+          "description": "実際には存在しない問題（ファイルの誤配置等）を🔴として報告していないか。特にファイルが実際にどこにあるかを確認してから報告しているか"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "eval_name": "folder-scoped-audit",
+      "prompt": "/doc-audit design-system/",
+      "expected_output": "docs/design-system/ 配下のファイルのみを対象としたレポートを出力する。project/ 配下のファイルは対象外。",
+      "files": [],
+      "assertions": [
+        {
+          "id": "a2-1",
+          "name": "対象がdesign-system/に絞られている",
+          "description": "project/ 配下のファイル（project-philosophy.md等）が指摘対象に含まれていないか"
+        },
+        {
+          "id": "a2-2",
+          "name": "3段階分類が存在する",
+          "description": "レポートに🔴・🟡・🟢の3セクションが含まれているか"
+        },
+        {
+          "id": "a2-3",
+          "name": "切り分け妥当性チェックが実施されている",
+          "description": "design-system/ 内のファイルについて汎用 vs アプリ固有の観点でチェックしているか"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "eval_name": "single-file-audit",
+      "prompt": "/doc-audit project/development-guide.md",
+      "expected_output": "docs/project/development-guide.md 1ファイルのみを対象としたレポートを出力する。参照先ファイルの存在確認（design-system/・project/ 配下）も実施する。",
+      "files": [],
+      "assertions": [
+        {
+          "id": "a3-1",
+          "name": "対象が単一ファイルに絞られている",
+          "description": "development-guide.md 以外のファイルが主たる指摘対象になっていないか（参照先確認として他ファイルを読むのはOK）"
+        },
+        {
+          "id": "a3-2",
+          "name": "参照整合性チェックが実施されている",
+          "description": "ファイル内のドキュメント参照（design-system-philosophy.md 等）が実際に存在するか確認しているか"
+        },
+        {
+          "id": "a3-3",
+          "name": "apps/catalogへの参照が指摘されている",
+          "description": "development-guide.md 内の apps/catalog への言及（存在しないディレクトリ）が指摘されているか"
+        }
+      ]
+    }
+  ]
+}
