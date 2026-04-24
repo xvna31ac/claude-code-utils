@@ -41,9 +41,11 @@ argument-hint: [{{argument-hint}}]
 ### Phase {{index}}: {{name}}
 
 ```
+
 目的: {{goal}}
 入力: {{input}}
 出力: {{output}}
+
 ```
 
 **Step 1: {{agent-name}} エージェントに委譲（Agent tool）**
@@ -93,8 +95,10 @@ argument-hint: [{{argument-hint}}]
 ### Phase {{N}}: {{phase-name}}（サブワークフロー委譲）
 
 ```
+
 目的: {{goal}}
 委譲先: {{sub-workflow-name}}
+
 ```
 
 **Step 1: {{sub-workflow-name}} SKILL.md を読み込む**
@@ -126,6 +130,7 @@ argument-hint: [{{argument-hint}}]
 {{/if}}
 
 **Step {{steps}}: 状態ファイルを更新**
+
 ```
 
 ---
@@ -218,4 +223,5 @@ argument-hint: [context-json]
 | エラーケース | アクション |
 |------------|-----------|
 | {{case}} | {{action}} |
+
 ```

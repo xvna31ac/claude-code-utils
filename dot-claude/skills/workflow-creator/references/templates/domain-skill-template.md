@@ -125,8 +125,10 @@ workflow-domain-skill-generator はこの形式でJSONを返却する:
 ## References
 
 {{#references}}
+
 - [{{name}}](references/{{filename}}) - {{description}}
 {{/references}}
+
 ```
 
 ---
@@ -151,15 +153,19 @@ workflow-domain-skill-generator はこの形式でJSONを返却する:
 ## description 生成ガイドライン
 
 ```
+
 形式: {対象}を{基準}で{動詞}。{使用場面}時に使用。
 文体: 三人称・動詞始まり
 文字数: 最大1024文字
+
 ```
 
 **例**:
 ```
+
 コードレビューを品質基準とセキュリティパターンで評価。PR作成前・マージ承認時に使用。
 要件仕様を構造化してスコープ・依存関係・規模を判定。設計フェーズ開始前に使用。
+
 ```
 
 ---
